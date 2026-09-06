@@ -255,8 +255,48 @@ async function fetchText(url: string): Promise<string | null> {
   }
 }
 
-async function resolveFromPublicPages(playlistId: string): Promise<SpotifyTrack[]> {
-  // Embed page usually includes the full trackList JSON; playlist page may only SSR a subset.
+function parsePlaylistNameFromHtml(html: string): string | null {
+  const ldMatches = html.matchAll(
+    /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi,
+  );
+
+  for (const match of ldMatches) {
+    const rawJson = match[1]?.trim();
+    if (!rawJson) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(rawJson) as { name?: string } | Array<{ name?: string }>;
+      const candidates = Array.isArray(parsed) ? parsed : [parsed];
+      for (const candidate of candidates) {
+        const name = candidate.name?.trim();
+        if (name && name.length > 0) {
+          return name;
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+  if (titleMatch?.[1]) {
+    const cleaned = titleMatch[1]
+      .replace(/\s*\|?\s*Spotify\s*$/i, '')
+      .replace(/\s*-\s*playlist\s+by\s+.+$/i, '')
+      .trim();
+    if (cleaned.length > 0) {
+      return cleaned;
+    }
+  }
+
+  return null;
+}
+
+async function resolveFromPublicPages(
+  playlistId: string,
+): Promise<{ name: string | null; tracks: SpotifyTrack[] }> {
   const urls = [
     `https://open.spotify.com/embed/playlist/${playlistId}`,
     `https://open.spotify.com/playlist/${playlistId}`,
@@ -269,12 +309,13 @@ async function resolveFromPublicPages(playlistId: string): Promise<SpotifyTrack[
     }
 
     const tracks = parseTracksFromHtml(html);
+    const name = parsePlaylistNameFromHtml(html);
     if (tracks.length > 0) {
-      return uniqueTracks(tracks);
+      return { name, tracks: uniqueTracks(tracks) };
     }
   }
 
-  return [];
+  return { name: null, tracks: [] };
 }
 
 async function fetchSpotifyAccessToken(clientId: string, clientSecret: string): Promise<string> {
@@ -302,15 +343,27 @@ async function fetchSpotifyAccessToken(clientId: string, clientSecret: string): 
   return payload.access_token;
 }
 
-async function resolveFromSpotifyApi(playlistId: string): Promise<SpotifyTrack[]> {
+async function resolveFromSpotifyApi(
+  playlistId: string,
+): Promise<{ name: string | null; tracks: SpotifyTrack[] }> {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    return [];
+    return { name: null, tracks: [] };
   }
 
   const accessToken = await fetchSpotifyAccessToken(clientId, clientSecret);
+
+  let playlistName: string | null = null;
+  const metaResponse = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (metaResponse.ok) {
+    const meta = (await metaResponse.json()) as { name?: string };
+    playlistName = meta.name?.trim() || null;
+  }
+
   const tracks: SpotifyTrack[] = [];
   let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
 
@@ -349,20 +402,28 @@ async function resolveFromSpotifyApi(playlistId: string): Promise<SpotifyTrack[]
     nextUrl = payload.next ?? null;
   }
 
-  return uniqueTracks(tracks);
+  return { name: playlistName, tracks: uniqueTracks(tracks) };
 }
 
-export async function resolveSpotifyPlaylistTracks(playlistUrl: string): Promise<SpotifyTrack[]> {
+export async function resolveSpotifyPlaylist(
+  playlistUrl: string,
+): Promise<{ name: string; tracks: SpotifyTrack[] }> {
   const { playlistId } = parseSpotifyPlaylistUrl(playlistUrl);
 
-  const publicTracks = await resolveFromPublicPages(playlistId);
-  if (publicTracks.length > 0) {
-    return publicTracks;
+  const publicResult = await resolveFromPublicPages(playlistId);
+  if (publicResult.tracks.length > 0) {
+    return {
+      name: publicResult.name?.trim() || 'spotify-playlist',
+      tracks: publicResult.tracks,
+    };
   }
 
-  const apiTracks = await resolveFromSpotifyApi(playlistId);
-  if (apiTracks.length > 0) {
-    return apiTracks;
+  const apiResult = await resolveFromSpotifyApi(playlistId);
+  if (apiResult.tracks.length > 0) {
+    return {
+      name: apiResult.name?.trim() || 'spotify-playlist',
+      tracks: apiResult.tracks,
+    };
   }
 
   throw new AppError(
@@ -370,4 +431,9 @@ export async function resolveSpotifyPlaylistTracks(playlistUrl: string): Promise
     'SPOTIFY_METADATA',
     502,
   );
+}
+
+export async function resolveSpotifyPlaylistTracks(playlistUrl: string): Promise<SpotifyTrack[]> {
+  const { tracks } = await resolveSpotifyPlaylist(playlistUrl);
+  return tracks;
 }

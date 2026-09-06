@@ -20,6 +20,7 @@ type DownloadTab = {
   endpoint: string
   placeholder: string
   description: string
+  buttonLabel: string // idle CTA; playlists download a zip, not a single MP3
 }
 
 const DOWNLOAD_TABS: DownloadTab[] = [
@@ -29,6 +30,7 @@ const DOWNLOAD_TABS: DownloadTab[] = [
     endpoint: "/api/youtube/track",
     placeholder: "https://www.youtube.com/watch?v=...",
     description: "Cole o link de um vídeo do YouTube.",
+    buttonLabel: "Baixar MP3",
   },
   {
     id: "youtube-playlist",
@@ -36,6 +38,7 @@ const DOWNLOAD_TABS: DownloadTab[] = [
     endpoint: "/api/youtube/playlist",
     placeholder: "https://www.youtube.com/playlist?list=...",
     description: "Cole o link de uma playlist do YouTube.",
+    buttonLabel: "Baixar playlist",
   },
   {
     id: "spotify-playlist",
@@ -43,6 +46,7 @@ const DOWNLOAD_TABS: DownloadTab[] = [
     endpoint: "/api/spotify/playlist",
     placeholder: "https://open.spotify.com/playlist/...",
     description: "Cole o link de uma playlist do Spotify.",
+    buttonLabel: "Baixar playlist",
   },
 ]
 
@@ -53,7 +57,6 @@ export function DownloadPanel() {
 
   const activeConfig =
     DOWNLOAD_TABS.find((tab) => tab.id === activeTab) ?? DOWNLOAD_TABS[0]
-  const isLoading = loadingTab === activeConfig.id
   const currentUrl = urls[activeConfig.id] ?? ""
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -120,13 +123,13 @@ export function DownloadPanel() {
                 className="w-full"
                 disabled={loadingTab !== null}
               >
-                {isLoading ? (
+                {loadingTab === tab.id ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
                     Baixando...
                   </>
                 ) : (
-                  "Baixar MP3"
+                  tab.buttonLabel
                 )}
               </Button>
             </form>

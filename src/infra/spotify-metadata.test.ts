@@ -117,6 +117,10 @@ describe('spotify-metadata', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => ({ name: 'API Playlist' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({
           items: [
             {
@@ -131,11 +135,14 @@ describe('spotify-metadata', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { resolveSpotifyPlaylistTracks } = await import('@/src/infra/spotify-metadata');
-    const tracks = await resolveSpotifyPlaylistTracks(
+    const { resolveSpotifyPlaylist } = await import('@/src/infra/spotify-metadata');
+    const result = await resolveSpotifyPlaylist(
       'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
     );
 
-    expect(tracks).toEqual([{ title: 'API Track', artists: 'API Artist' }]);
+    expect(result).toEqual({
+      name: 'API Playlist',
+      tracks: [{ title: 'API Track', artists: 'API Artist' }],
+    });
   });
 });

@@ -13,11 +13,13 @@ import {
   downloadBestMp3,
   downloadBestMp3FromQuery,
   downloadPlaylistMp3s,
+  probeMediaArtistTitle,
+  probePlaylistTitle,
 } from '@/src/infra/yt-dlp';
 
 const mockedSpawn = vi.mocked(spawn);
 
-function mockSpawnSuccess(): void {
+function mockSpawnSuccess(stdout = ''): void {
   mockedSpawn.mockImplementation(() => {
     const proc = new EventEmitter() as NodeJS.EventEmitter & {
       stdout: EventEmitter;
@@ -25,7 +27,12 @@ function mockSpawnSuccess(): void {
     };
     proc.stdout = new EventEmitter();
     proc.stderr = new EventEmitter();
-    queueMicrotask(() => proc.emit('close', 0));
+    queueMicrotask(() => {
+      if (stdout) {
+        proc.stdout.emit('data', Buffer.from(stdout));
+      }
+      proc.emit('close', 0);
+    });
     return proc as ReturnType<typeof spawn>;
   });
 }
@@ -58,11 +65,12 @@ describe('yt-dlp', () => {
     await fs.rm(outDir, { recursive: true, force: true });
   });
 
-  it('downloadBestMp3 spawns yt-dlp with expected audio args', async () => {
+  it('downloadBestMp3 spawns yt-dlp with Artist - Title fileBase', async () => {
     mockSpawnSuccess();
-    await fs.writeFile(path.join(outDir, 'track.mp3'), 'audio');
+    const fileBase = 'Jazzy - Giving Me';
+    await fs.writeFile(path.join(outDir, `${fileBase}.mp3`), 'audio');
 
-    await downloadBestMp3('https://www.youtube.com/watch?v=abc', outDir, 'track');
+    await downloadBestMp3('https://www.youtube.com/watch?v=abc', outDir, fileBase);
 
     expect(mockedSpawn).toHaveBeenCalledWith(
       'yt-dlp',
@@ -74,9 +82,10 @@ describe('yt-dlp', () => {
         'mp3',
         '--audio-quality',
         '0',
+        '--windows-filenames',
         '--no-playlist',
         '-o',
-        path.join(outDir, 'track.%(ext)s'),
+        path.join(outDir, `${fileBase}.%(ext)s`),
         'https://www.youtube.com/watch?v=abc',
       ]),
       expect.objectContaining({ shell: false }),
@@ -85,10 +94,11 @@ describe('yt-dlp', () => {
 
   it('downloadBestMp3 returns mp3 file path on success', async () => {
     mockSpawnSuccess();
-    const expectedPath = path.join(outDir, 'track.mp3');
+    const fileBase = 'Artist - Song';
+    const expectedPath = path.join(outDir, `${fileBase}.mp3`);
     await fs.writeFile(expectedPath, 'audio');
 
-    const result = await downloadBestMp3('https://www.youtube.com/watch?v=abc', outDir, 'track');
+    const result = await downloadBestMp3('https://www.youtube.com/watch?v=abc', outDir, fileBase);
 
     expect(result.filePath).toBe(expectedPath);
   });
@@ -97,15 +107,16 @@ describe('yt-dlp', () => {
     mockSpawnFailure('ERROR: No audio formats found');
 
     await expect(
-      downloadBestMp3('https://www.youtube.com/watch?v=abc', outDir),
+      downloadBestMp3('https://www.youtube.com/watch?v=abc', outDir, 'A - B'),
     ).rejects.toMatchObject({ code: 'NO_AUDIO' });
   });
 
   it('downloadBestMp3FromQuery uses ytsearch1 prefix', async () => {
     mockSpawnSuccess();
-    await fs.writeFile(path.join(outDir, 'search.mp3'), 'audio');
+    const fileBase = 'Artist - Title';
+    await fs.writeFile(path.join(outDir, `${fileBase}.mp3`), 'audio');
 
-    await downloadBestMp3FromQuery('Artist - Title', outDir, 'search');
+    await downloadBestMp3FromQuery('Artist - Title', outDir, fileBase);
 
     expect(mockedSpawn).toHaveBeenCalledWith(
       'yt-dlp',
@@ -114,15 +125,82 @@ describe('yt-dlp', () => {
     );
   });
 
-  it('downloadPlaylistMp3s omits --no-playlist flag', async () => {
+  it('downloadPlaylistMp3s uses title template without playlist_index', async () => {
     mockSpawnSuccess();
-    await fs.writeFile(path.join(outDir, '001-track.mp3'), 'audio');
+    await fs.writeFile(path.join(outDir, 'Artist - Song.mp3'), 'audio');
 
     await downloadPlaylistMp3s('https://www.youtube.com/playlist?list=PLabc', outDir);
 
     const args = mockedSpawn.mock.calls[0]?.[1] as string[];
     expect(args).not.toContain('--no-playlist');
-    expect(args).toContain('--audio-format');
-    expect(args).toContain('mp3');
+    expect(args.some((a) => a.includes('playlist_index'))).toBe(false);
+    expect(args).toContain('--windows-filenames');
+    expect(args.some((a) => a.includes('%(title)s.%(ext)s'))).toBe(true);
+  });
+
+  it('probeMediaArtistTitle reads artist/uploader and title from JSON', async () => {
+    mockSpawnSuccess(
+      JSON.stringify({
+        artist: 'Jazzy',
+        uploader: 'ChannelX',
+        channel: 'ChannelX',
+        title: 'Giving Me',
+      }),
+    );
+
+    const result = await probeMediaArtistTitle('https://www.youtube.com/watch?v=abc');
+
+    expect(result).toEqual({ artist: 'Jazzy', title: 'Giving Me' });
+  });
+
+  it('probeMediaArtistTitle skips NA artist and uses uploader from JSON', async () => {
+    mockSpawnSuccess(
+      JSON.stringify({
+        artist: 'NA',
+        uploader: 'Zezé Channel',
+        channel: 'Zezé Channel',
+        title: 'Sem Medo De Ser Feliz',
+      }),
+    );
+
+    const result = await probeMediaArtistTitle('https://www.youtube.com/watch?v=abc');
+
+    expect(result).toEqual({ artist: 'Zezé Channel', title: 'Sem Medo De Ser Feliz' });
+  });
+
+  it('probeMediaArtistTitle preserves UTF-8 accents in title', async () => {
+    mockSpawnSuccess(
+      JSON.stringify({
+        artist: null,
+        uploader: 'Uploader',
+        title: 'Zezé Di Camargo & Luciano - Sem Medo De Ser Feliz',
+      }),
+    );
+
+    const result = await probeMediaArtistTitle('https://www.youtube.com/watch?v=abc');
+
+    expect(result.title).toBe('Zezé Di Camargo & Luciano - Sem Medo De Ser Feliz');
+    expect(result.title).toContain('é');
+  });
+
+  it('probePlaylistTitle reads playlist_title from JSON', async () => {
+    mockSpawnSuccess(JSON.stringify({ playlist_title: 'House Music 2025', title: 'ignored' }));
+
+    const title = await probePlaylistTitle('https://www.youtube.com/playlist?list=PLabc');
+
+    expect(title).toBe('House Music 2025');
+  });
+
+  it('downloadPlaylistMp3s strips legacy 001- prefixes after download', async () => {
+    mockSpawnSuccess();
+    await fs.writeFile(path.join(outDir, '001-Jazzy - Giving Me.mp3'), 'audio');
+
+    const { files } = await downloadPlaylistMp3s(
+      'https://www.youtube.com/playlist?list=PLabc',
+      outDir,
+    );
+
+    expect(files.some((f) => path.basename(f) === 'Jazzy - Giving Me.mp3')).toBe(true);
+    expect(files.every((f) => !/^\d{3}-/.test(path.basename(f)))).toBe(true);
   });
 });
