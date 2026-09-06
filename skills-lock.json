@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "unlazy": {
+      "source": "cartychris/unlazy-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "58c911557fdbc6d0189e6be57f94ed96f211fb64e69b866db928e2538ed3d2c9"
+    }
+  }
+}

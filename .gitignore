@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+temp/
+.env.local
+*.mp3
+*.zip
+
+# local probe/debug scripts (not part of the product)
+scripts/probe-*.mts
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
