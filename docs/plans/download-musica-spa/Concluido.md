@@ -30,4 +30,5 @@ Só após verification + gates met.
 
 ## Git
 
-Perguntado ao humano: **sim** — autorizado: pendente
+Perguntado ao humano: **sim** — autorizado: **sim**
+Remoto: https://github.com/leandrozanardo/get-music (`master`)
